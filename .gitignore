@@ -1,0 +1,19 @@
+# CCS build outputs
+Release/
+CPU1/
+CPU2/
+Debug/
+
+# Eclipse / CCS metadata and cache
+.launches/
+.settings/
+RemoteSystemsTempFiles/
+.jxbrowser-data/
+**/.jxbrowser-data/
+
+# Generated build files
+*.out
+*.map
+*.obj
+*.d
+*.pp

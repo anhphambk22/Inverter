@@ -1,0 +1,173 @@
+#include <math.h>
+
+// Bắt buộc phải có extern "C" khi dùng file .cpp để PSIM có thể liên kết (link)
+// được hàm
+extern "C" {
+__declspec(dllexport) void simuser(double t, double delt, double *in,
+                                   double *out) {
+  // 1. Khai báo các biến trạng thái bằng static để lưu giá trị qua mỗi chu kỳ
+  static double v_alpha = 0.0;
+  static double v_beta = 0.0;
+  static double v_dc = 0.0;
+  static double pi_integral = 0.0;
+  static double theta = 0.0;
+  static double k_adaptive =
+      0.707; // Biến trạng thái Lyapunov cho hệ số thích nghi k (Hạ xuống 0.707 để lọc sóng hài)
+
+  // 2. Khởi tạo/Reset biến về 0 tại thời điểm bắt đầu mô phỏng
+  if (t == 0.0) {
+    v_alpha = 0.0;
+    v_beta = 0.0;
+    v_dc = 0.0;
+    pi_integral = 0.0;
+    theta = 0.0;
+    k_adaptive = 0.707; // Reset hệ số k về giá trị 0.707
+  }
+
+  // Định nghĩa các hằng số hệ thống
+  const double PI_CONST = 3.141592653589793;
+  const double omega_0 =
+      2.0 * PI_CONST * 50.0; // Tần số lưới 50Hz (~314.16 rad/s)
+
+  // 3. Đọc tín hiệu ngõ vào (5 Inputs từ PSIM)
+  double v_s = in[0];
+  double k = (in[1] != 0.0) ? in[1] : 0.707; // Đưa k_nom về 0.707 để bóp hẹp băng thông
+  double Kp = (in[2] != 0.0) ? in[2] : 60.0;
+  double Ki = (in[3] != 0.0) ? in[3] : 1400.0;
+  double k_dc = (in[4] != 0.0) ? in[4] : 0.1; // Hạ k_dc xuống 0.1 để triệt tiêu dao động trên v_dc
+
+  // Biến trung gian
+  double v_q, v_q_norm, error_w, omega_est, V_mag;
+  double error_sogi, d_v_alpha, d_v_beta, d_v_dc;
+
+  // --- BƯỚC 1: TÍNH TOÁN BIÊN ĐỘ ĐỂ CHUẨN HÓA (Normalization) ---
+  // Rất quan trọng: Điện áp lưới thường là 311V, nếu không chuẩn hóa,
+  // sai số v_q sẽ lớn gấp 311 lần, làm bộ PI (Kp=60, Ki=1400) bị khuếch đại
+  // quá mức và gây mất ổn định (gãy đồ thị).
+  V_mag = sqrt(v_alpha * v_alpha + v_beta * v_beta);
+  if (V_mag < 1.0) {
+    V_mag = 1.0; // Tránh chia cho 0 khi mới khởi động
+  }
+
+  // --- BƯỚC 2: VÒNG KHÓA PHA (PLL) ---
+  // Biến đổi Park cải tiến (Phù hợp với sóng Sin)
+  // Dùng công thức này để theta khóa chính xác và đồng pha với sóng Sin
+  v_q = v_alpha * cos(theta) + v_beta * sin(theta);
+
+  // Chuẩn hóa v_q (đưa về hệ số per-unit)
+  v_q_norm = v_q / V_mag;
+
+  // Tích phân với Anti-Windup (Chống tràn tích phân khi khởi động)
+  pi_integral += v_q_norm * delt;
+
+  // Giới hạn khâu tích phân để không bị vọt lố quá mức
+  if (pi_integral > 100.0)
+    pi_integral = 100.0;
+  if (pi_integral < -100.0)
+    pi_integral = -100.0;
+
+  // PI Controller tính toán độ lệch tần số
+  error_w = Kp * v_q_norm + Ki * pi_integral;
+
+  // Giới hạn sai lệch tần số (Grid code thường chỉ cho phép lệch +- 5Hz đến
+  // 10Hz) Ta giới hạn ở +- 62.8 rad/s (tức là +- 10Hz) để tránh PLL bị trượt
+  // pha lúc khởi động
+  if (error_w > 62.8)
+    error_w = 62.8;
+  if (error_w < -62.8)
+    error_w = -62.8;
+
+  // Tần số góc ước lượng tổng cộng
+  omega_est = omega_0 + error_w;
+
+  // Tích phân tần số để cập nhật góc pha theta
+  theta += omega_est * delt;
+
+  // Giới hạn góc pha theta tuần hoàn trong khoảng [0, 2*PI]
+  if (theta >= 2.0 * PI_CONST) {
+    theta -= 2.0 * PI_CONST;
+  } else if (theta < 0.0) {
+    theta += 2.0 * PI_CONST;
+  }
+
+  // --- BƯỚC 3: ADAPTIVE OBSERVER - SOGI (Nâng cấp lên phương pháp RK2 - Heun)
+  // --- Phương pháp Euler cũ sinh ra sai số pha (Phase shift/Phase lead) khi mô
+  // phỏng rời rạc. Nâng cấp lên Runge-Kutta bậc 2 (Heun's method) để khử hoàn
+  // toàn sai số trượt pha này.
+
+  // LUẬT THÍCH NGHI DỰA TRÊN LYAPUNOV (Lyapunov-based Adaptive Law)
+  // CHÚ Ý: Đã thêm khâu CHUẨN HÓA SAI SỐ (chia cho V_mag).
+  // Vì v_s lên tới 311V, error^2 sẽ ra con số khổng lồ (vài chục nghìn) khiến k
+  // lập tức bị bão hòa ở 4.0. Chuẩn hóa giúp sai số nằm trong khoảng nhỏ, k sẽ
+  // hội tụ rất mềm mại.
+  double gamma = 10000.0; // Tốc độ học cực nhanh để dập nhiễu
+  double lambda =
+      50.0; // Lực kéo k trở về 1.414 cực mạnh (thời gian phục hồi 0.02s)
+
+  // 1. Tính đạo hàm tại điểm hiện tại (t)
+  double error_sogi_1 = v_s - v_alpha - v_dc;
+  double norm_err_1 =
+      error_sogi_1 / 311.0; // Chuẩn hóa cứng bằng điện áp đỉnh 311V
+  double d_k_1 =
+      gamma * (norm_err_1 * norm_err_1) - lambda * (k_adaptive - 0.707);
+
+  double d_v_alpha_1 =
+      omega_est * k_adaptive * error_sogi_1 - omega_est * v_beta;
+  double d_v_beta_1 = omega_est * v_alpha;
+  double d_v_dc_1 = omega_est * k_dc * error_sogi_1;
+
+  // 2. Dự đoán giá trị tại điểm tiếp theo (t + delt)
+  double v_alpha_pred = v_alpha + d_v_alpha_1 * delt;
+  double v_beta_pred = v_beta + d_v_beta_1 * delt;
+  double v_dc_pred = v_dc + d_v_dc_1 * delt;
+  double k_pred = k_adaptive + d_k_1 * delt;
+
+  // Giới hạn k_pred để hệ thống duy trì độ ổn định (0.1 < k < 4.0)
+  if (k_pred < 0.1)
+    k_pred = 0.1;
+  if (k_pred > 4.0)
+    k_pred = 4.0;
+
+  // 3. Tính đạo hàm tại điểm dự đoán
+  double error_sogi_2 = v_s - v_alpha_pred - v_dc_pred;
+  double norm_err_2 =
+      error_sogi_2 / 311.0; // Chuẩn hóa cứng sai số dự đoán bằng 311V
+  double d_k_2 = gamma * (norm_err_2 * norm_err_2) - lambda * (k_pred - 0.707);
+
+  double d_v_alpha_2 =
+      omega_est * k_pred * error_sogi_2 - omega_est * v_beta_pred;
+  double d_v_beta_2 = omega_est * v_alpha_pred;
+  double d_v_dc_2 = omega_est * k_dc * error_sogi_2;
+
+  // 4. Cập nhật giá trị chính thức (Trung bình cộng đạo hàm - Trapezoidal)
+  v_alpha += (d_v_alpha_1 + d_v_alpha_2) / 2.0 * delt;
+  v_beta += (d_v_beta_1 + d_v_beta_2) / 2.0 * delt;
+  v_dc += (d_v_dc_1 + d_v_dc_2) / 2.0 * delt;
+  k_adaptive += (d_k_1 + d_k_2) / 2.0 * delt;
+
+  // Giới hạn k_adaptive chính thức
+  if (k_adaptive < 0.1)
+    k_adaptive = 0.1;
+  if (k_adaptive > 4.0)
+    k_adaptive = 4.0;
+
+  // --- BƯỚC 4: ĐẦU RA CỦA KHỐI DLL ---
+  out[0] = v_alpha;
+  out[1] = v_beta;
+  out[2] = omega_est;
+  out[3] = theta * (180.0 / PI_CONST); // Đổi sang Độ (Degrees) cho PSIM
+  out[4] = v_dc;
+  out[5] =
+      k_adaptive; // Bổ sung đầu ra thứ 6 để xem sự thay đổi của k trong PSIM
+
+  // --- BƯỚC 5: ĐIỀU KHIỂN CÔNG TẮC SỰ CỐ TỪ DLL ---
+  // KỊCH BẢN 2: Nhảy tần số và nhảy pha tại t = 0.2s
+  if (t < 0.2) {
+    out[6] = 0.0; // Sw1 OFF (Nguồn 55Hz, nhảy pha)
+    out[7] = 1.0; // Sw2 ON  (Nguồn lưới bình thường)
+  } else {
+    out[6] = 1.0; // Sw1 ON  (Đóng vào nguồn sự cố)
+    out[7] = 0.0; // Sw2 OFF (Cắt nguồn cũ)
+  }
+}
+}
