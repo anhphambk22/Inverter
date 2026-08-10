@@ -4,7 +4,7 @@
 #define FREQ_SAMPLING       (10e3)
 #define SAMPLING_TIME       (1.0/FREQ_SAMPLING)      //  = 1/FREQ_SAMPLING
 
-#define FREQ_SW             (10e3)    // 10kHz carrier → Unipolar tải = 20kHz
+#define FREQ_SW             (20e3)
 #define GRID_FREQ           (50.0)
 #define PI                  (3.1415926535897932)
 #define TWOPI               (2.0*PI)

@@ -512,12 +512,10 @@ float PR_calculate(PR_Controller *pr, float error, int index) {
     float resonant_part = (pr->a1 * error - pr->a2 * pr->prev_error[index][1] - pr->b1 * pr->prev_output[index][0]
     - pr->b2 * pr->prev_output[index][1])/pr->b0;
 
-    // Anti-windup for resonant accumulator
-    // resonant_part đơn vị VOLT → duty_pr = resonant_part / Vdc_base(~100V)
-    // ±10V → duty correction tối đa ±10% — đủ bù sai số thực tế, không gây vọt lố
-    // Tăng nếu sai số dư lớn, giảm nếu bị vọt lố
-    if (resonant_part > 10.0f) resonant_part = 10.0f;
-    else if (resonant_part < -10.0f) resonant_part = -10.0f;
+    // Anti-windup for resonant accumulator (dùng biến PR_AW_limit để chỉnh trên Watch Window)
+    extern volatile float PR_AW_limit;
+    if (resonant_part > PR_AW_limit) resonant_part = PR_AW_limit;
+    else if (resonant_part < -PR_AW_limit) resonant_part = -PR_AW_limit;
 
     // Output
     float output = proportional_part + resonant_part;
