@@ -1,8 +1,8 @@
 # CCS build outputs
-Release/
-CPU1/
-CPU2/
-Debug/
+/Release/
+/CPU1/
+/CPU2/
+/Debug/
 
 # Eclipse / CCS metadata and cache
 .launches/
