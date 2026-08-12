@@ -578,7 +578,8 @@ void Adaptive_SOGI_PLL_Func(struct ADAPTIVE_SOGI_PLL *pll) {
 
     // 3. Adaptive Observer - SOGI (Heun's method)
     error_sogi_1 = pll->v_s - pll->v_alpha - pll->v_dc;
-    norm_err_1 = error_sogi_1 / 311.0;
+    float32 v_mag_norm = (pll->V_mag > 10.0f) ? pll->V_mag : 311.0f;
+    norm_err_1 = error_sogi_1 / v_mag_norm;
     d_k_1 = pll->gamma * (norm_err_1 * norm_err_1) - pll->lambda * (pll->k_adaptive - 0.707);
     d_v_alpha_1 = pll->omega_est * pll->k_adaptive * error_sogi_1 - pll->omega_est * pll->v_beta;
     d_v_beta_1 = pll->omega_est * pll->v_alpha;
@@ -593,7 +594,7 @@ void Adaptive_SOGI_PLL_Func(struct ADAPTIVE_SOGI_PLL *pll) {
     if (k_pred > 4.0) k_pred = 4.0;
 
     error_sogi_2 = pll->v_s - v_alpha_pred - v_dc_pred;
-    norm_err_2 = error_sogi_2 / 311.0;
+    norm_err_2 = error_sogi_2 / v_mag_norm;
     d_k_2 = pll->gamma * (norm_err_2 * norm_err_2) - pll->lambda * (k_pred - 0.707);
     d_v_alpha_2 = pll->omega_est * k_pred * error_sogi_2 - pll->omega_est * v_beta_pred;
     d_v_beta_2 = pll->omega_est * v_alpha_pred;
