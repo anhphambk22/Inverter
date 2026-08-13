@@ -27,7 +27,7 @@ Uint16 relay_k1_inv =
 Uint16 relay_k6_pv =
     0; // 1 = BẬT K6 (Relay Ngõ Vào DC - GPIO27),      Mặc định Mức 1
 Uint16 relay_k3k4_grid =
-    0; // 1 = BẬT K3&K4 (Relay Nối Lưới - GPIO30),     Mặc định Mức 1
+    1; // 1 = BẬT K3&K4 (Relay Nối Lưới - GPIO30),     Mặc định Mức 1
 Uint16 auto_test_relay = 0; // 1 = Tự động xoay vòng | 0 = Thủ công
 Uint32 cnt_relay_test = 0;
 
@@ -186,7 +186,7 @@ volatile float32 pr_I_y1 = 0,
 float32 Kp = 0.1f; // Hệ số Kp cho Vòng Áp Inverter (Tăng lên 0.1f cho thử
                    // nghiệm bám setpoint chính xác)
 float32 Kr = 50;
-float32 Kp_I = 0.01f; // Hệ số Kp cho Vòng Kín Dòng Điện (Mức tối ưu triệt tiêu cộng hưởng LC 1.4kHz)
+float32 Kp_I = 0.01f; // Hệ số Kp cho Vòng Kín Dòng Điện (Mức tối ưu triệt tiêu cộng hưởng RLC 2.98kHz)
 float32 Kr_I = 20.0f; // Hệ số Kr cho Vòng Kín Dòng Điện
 float32 omegac_I = 5.0f;
 float32 sign_iL = -1.0f; // 1.0 = Thuận cực tính (Phản hồi âm) | -1.0 = Đảo cực
@@ -899,9 +899,9 @@ interrupt void adcA_isr(void) {
     debug_err_inv = err;
     debug_pr_b0 = 4.005f; // Xác nhận inline PR đang chạy
 
-    // 9. Unipolar SPWM
-    float duty_LegA = (dutyA + 1.0f) / 2.0f;
-    float duty_LegB = (-dutyA + 1.0f) / 2.0f;
+    // 9. Unipolar SPWM (Đã đảo cực tính để đồng pha 100% với điện áp lưới)
+    float duty_LegA = (-dutyA + 1.0f) / 2.0f;
+    float duty_LegB = (dutyA + 1.0f) / 2.0f;
 
     updateDuty(2, duty_LegA);
     updateDuty(1, duty_LegB);
@@ -968,9 +968,9 @@ interrupt void adcA_isr(void) {
     // 8. Giới hạn duty cycle an toàn [-0.95, 0.95]
     dutyA = Limiter(control_signal, 0.95f, -0.95f);
 
-    // 9. Unipolar SPWM
-    float duty_LegA = (dutyA + 1.0f) / 2.0f;
-    float duty_LegB = (-dutyA + 1.0f) / 2.0f;
+    // 9. Unipolar SPWM (Đã đảo cực tính để đồng pha 100% với điện áp lưới)
+    float duty_LegA = (-dutyA + 1.0f) / 2.0f;
+    float duty_LegB = (dutyA + 1.0f) / 2.0f;
 
     updateDuty(2, duty_LegA);
     updateDuty(1, duty_LegB);
@@ -1037,9 +1037,9 @@ interrupt void adcA_isr(void) {
     // 8. Giới hạn duty cycle an toàn [-0.95, 0.95]
     dutyA = Limiter(control_signal, 0.95f, -0.95f);
 
-    // 9. Unipolar SPWM
-    float duty_LegA = (dutyA + 1.0f) / 2.0f;
-    float duty_LegB = (-dutyA + 1.0f) / 2.0f;
+    // 9. Unipolar SPWM (Đã đảo cực tính để đồng pha 100% với điện áp lưới)
+    float duty_LegA = (-dutyA + 1.0f) / 2.0f;
+    float duty_LegB = (dutyA + 1.0f) / 2.0f;
 
     updateDuty(2, duty_LegA);
     updateDuty(1, duty_LegB);
@@ -1070,8 +1070,8 @@ interrupt void adcA_isr(void) {
     float control_signal = ramp_ma_open * sinf(2.0f * PI * theta_gen);
     dutyA = control_signal;
 
-    float duty_LegA = (dutyA + 1.0f) / 2.0f;
-    float duty_LegB = (-dutyA + 1.0f) / 2.0f;
+    float duty_LegA = (-dutyA + 1.0f) / 2.0f;
+    float duty_LegB = (dutyA + 1.0f) / 2.0f;
 
     updateDuty(2, duty_LegA);
     updateDuty(1, duty_LegB);
@@ -1090,6 +1090,10 @@ interrupt void adcA_isr(void) {
     ForceOFFPWM(1, 1);
     ForceOFFPWM(2, 1);
     ePWM1_3_BUFF_OFF;
+    // Đưa toàn bộ Relay về lại giá trị cài đặt ban đầu khi bị FAULT
+    relay_k1_inv = 0;
+    relay_k6_pv = 0;
+    relay_k3k4_grid = 1; // 1 = Ngắt K3&K4 (Relay Nối Lưới) về giá trị ban đầu
     if (ResetFault)
       goto ResetMode;
     break;
