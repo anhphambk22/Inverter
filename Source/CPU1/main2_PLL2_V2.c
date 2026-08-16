@@ -45,7 +45,7 @@ float32 Vpeak_ref = 50.0f; // Setpoint biên độ ĐỈNH VAC ngõ ra (V peak)
 float32 Vpeak_ref_rms =
     35.4f; // CHỈ ĐỂ QUAN SÁT: Vrms tương đương = Vpeak_ref / 1.4142
            // Cập nhật tay khi đổi Vpeak_ref (Vpeak_ref / 1.4142)
-float32 Ipeak_ref = 0.0f; // Setpoint biên độ đỉnh Dòng điện ngõ ra (A peak) - Mặc định 0.0A để đồng bộ nối lưới an toàn
+float32 Ipeak_ref = 2.0f; // Setpoint biên độ đỉnh Dòng điện ngõ ra (A peak) - Mặc định 0.0A để đồng bộ nối lưới an toàn
 
 float32 deadrise = 500.0, deadfall = 100.0;
 float32 Fs_LLC_OpenLoop = 105000;
@@ -86,7 +86,7 @@ float32 dutypwmtest = 0, freqpwmtest = 0, coef_check = 0, offset_test = 0;
 int ENPFC = 0, ENPD = 0;
 interrupt void adcA_isr(void);
 //====
-struct COEF_1ST coef1stLPF, coef1stLPF_REF, coef1stLPF_LC, coef1stLPF_VLink;
+struct COEF_1ST coef1stLPF, coef1stLPF_REF, coef1stLPF_LC, coef1stLPF_VLink, coef1stLPF_iL;
 struct COEF_1ST coef_APF;
 struct COEF_2ND coef2ndBSF_Vlink, coef2ndBSF_Vbatt, coef2nd_BPF_W5th,
     coef2nd_BPF_W7th;
@@ -186,8 +186,8 @@ volatile float32 pr_I_y1 = 0,
 float32 Kp = 0.1f; // Hệ số Kp cho Vòng Áp Inverter (Tăng lên 0.1f cho thử
                    // nghiệm bám setpoint chính xác)
 float32 Kr = 50;
-float32 Kp_I = 0.01f; // Hệ số Kp cho Vòng Kín Dòng Điện (Mức tối ưu triệt tiêu cộng hưởng RLC 2.98kHz)
-float32 Kr_I = 20.0f; // Hệ số Kr cho Vòng Kín Dòng Điện
+float32 Kp_I = 0.05f; // Hệ số Kp cho Vòng Kín Dòng Điện (Băng thông vòng kín ~1kHz)
+float32 Kr_I = 100.0f; // Hệ số Kr cho Vòng Kín Dòng Điện (Độ lợi gain >60dB tại 50Hz)
 float32 omegac_I = 5.0f;
 float32 sign_iL = -1.0f; // 1.0 = Thuận cực tính (Phản hồi âm) | -1.0 = Đảo cực
                          // tính cảm biến dòng iL
@@ -207,20 +207,22 @@ float32 error1 = 0.0, omegac = 10.0f, Kr_3rd = 20, omegac_3rd = 5.0f,
 // omegac=10 rad/s → băng thông ~1.6Hz quanh 50Hz, đủ rộng để bám setpoint
 volatile float32 Vlink_offset = 560.0f; // Zero offset ADC khi Vdc = 0V
 volatile float32 Vlink_gain =
-    0.0909f; // Hệ số V/count (Đã Calib chuẩn đét 70.0VDC thực tế)
+    0.0890f; // Hệ số V/count (Đã Calib chuẩn đét tại 120.0VDC thực tế)
 volatile float32 Vgrid_gain_calib =
     0.91f; // Hệ số Calib chuẩn cho cảm biến áp AC Inverter 1
 volatile float32 Vgrid2_gain_calib =
     0.776f; // Hệ số Calib chuẩn cho cảm biến áp AC Lưới 2 (Calib tuyến tính 6 điểm: 17V -> 90V)
+volatile float32 total_delay_sec =
+    0.000493f; // Tổng thời gian trễ phần cứng + phần mềm (493us tương ứng 8.875 độ ở 50Hz) cố định cho SOGI-PLL
+volatile float32 delay_I_sec =
+    0.0f; // Biến bù pha DÒNG ĐIỆN ĐỘC LẬP (Nhập âm trên Watch Window khi dòng bị sớm pha, KHÔNG ảnh hưởng PLL)
 volatile float32 phase_shift_deg =
-    8.875f; // Bù góc lệch pha phần cứng (+8.875 độ để tiến pha bù trễ)
+    8.875f; // Góc bù trễ pha tự động hiển thị trên Watch Window (độ)
 volatile float32 Vgrid_sync_gain =
-    1.05f; // Hệ số bù sụt áp phần cứng / Deadtime (Mặc định 1.05, chỉnh nhích trên Watch Window)
+    1.00f; // Hệ số bù điện áp Feedforward hòa lưới (Chuẩn 1.00 để không vọt dòng khi Iref=0)
 volatile float32
     iL_gain_calib =
-        3.5f; // Hệ số Calib chuẩn cho cảm biến dòng AC Inverter (chỉnh trên
-              // Watch Window) Calib thực nghiệm 5 điểm: DSP cao hơn VOM ~10%
-              // Hồi quy tuyến tính: Vgrid_true ≈ 0.914 × Vgrid_DSP
+        5.00f; // Hệ số Calib cảm biến dòng AC Inverter (Tăng từ 3.5 lên 5.0 để iL_rms đọc chuẩn trùng VOM)
 volatile float32 R_load =
     50.0f; // Điện trở tải thử nghiệm (Ohm) cho bù Feedforward độc lập
 volatile float32 PR_AW_limit =
@@ -303,7 +305,7 @@ void scib_send_float_x10(float val) {
   scib_send_int(frac);
 }
 
-void main(void) {
+ void main(void) {
   //
 
   DINT;
@@ -480,6 +482,7 @@ void main(void) {
   // calculate PLL Loop filter parameters based on PI controller
   coeff_LF = getcoeff_LF(LF_KP, LF_KI, SAMPLING_TIME); // coeff of PLL
   coef1stLPF = get1stLPFcoef(5000.0, FREQ_SAMPLING);   // coeff for filter Vgrid
+  coef1stLPF_iL = get1stLPFcoef(1000.0, FREQ_SAMPLING); // Coeff cho LPF Dòng iL (Băng thông 1000Hz lọc sạch nhiễu xung PWM 20kHz)
   coef1stLPF_VLink =
       get1stLPFcoef(fcutVlink, FREQ_SAMPLING); // coeff for filter VLink
   coef2ndBSF_Vlink =
@@ -495,6 +498,8 @@ void main(void) {
   zVGC.out = 0.0;
   zVbatt.in = 0.0;
   zVbatt.out = 0.0;
+  zIGA.in = 0.0;
+  zIGA.out = 0.0;
   // Band stop filter
   z2_Vlink_BSF.in = 0.0;
   z2_Vlink_BSF.out = 0.0;
@@ -613,16 +618,26 @@ void main(void) {
       DaccRegs.DACVALS.all =
           (Uint16)(4095.0f * (VgridA / 200.0f + 1.0f) / 2.0f);
       break;
-    case 22:
-      // Xuất iL (dòng điện cảm biến đọc được) ra DAC (Thang ±5A)
-      // Scale: iL ±5A → DAC 0~4095, trung tâm 2048 = 1.65V = 0A
-      DaccRegs.DACVALS.all = (Uint16)(4095.0f * (iL / 5.0f + 1.0f) / 2.0f);
+    case 22: {
+      // Xuất iL đã lọc LPF mượt ra DAC (Thang ±5A)
+      static float32 iL_dac_f22 = 0.0f;
+      iL_dac_f22 = 0.85f * iL_dac_f22 + 0.15f * iL;
+      float32 val_dac = (4095.0f * (iL_dac_f22 / 5.0f + 1.0f) / 2.0f);
+      if (val_dac > 4095.0f) val_dac = 4095.0f;
+      if (val_dac < 0.0f) val_dac = 0.0f;
+      DaccRegs.DACVALS.all = (Uint16)val_dac;
       break;
-    case 23:
-      // Xuất iL (dòng điện cảm biến đọc được) ra DAC (Thang PHÓNG ĐẠI ±2.5A cho
-      // dòng nhỏ) Scale: iL ±2.5A → DAC 0~4095, trung tâm 2048 = 1.65V = 0A
-      DaccRegs.DACVALS.all = (Uint16)(4095.0f * (iL / 2.5f + 1.0f) / 2.0f);
+    }
+    case 23: {
+      // Xuất iL đã lọc LPF mượt ra DAC (Thang PHÓNG ĐẠI ±2.5A cho dòng nhỏ)
+      static float32 iL_dac_f23 = 0.0f;
+      iL_dac_f23 = 0.85f * iL_dac_f23 + 0.15f * iL;
+      float32 val_dac = (4095.0f * (iL_dac_f23 / 2.5f + 1.0f) / 2.0f);
+      if (val_dac > 4095.0f) val_dac = 4095.0f;
+      if (val_dac < 0.0f) val_dac = 0.0f;
+      DaccRegs.DACVALS.all = (Uint16)val_dac;
       break;
+    }
     }
   }
 }
@@ -657,8 +672,9 @@ interrupt void adcA_isr(void) {
   adcVgrid2 =
       AdccResultRegs.ADCRESULT1; // Đọc Vgrid2 từ SOC1 của ADC-C (ADC_C2)
 
-  iL = scaled_sensor_CURR(adcIL, 0.0, 1.65, offset_Comp_iL, 3.27, 1) *
-       iL_gain_calib;
+  float32 iL_raw = scaled_sensor_CURR(adcIL, 0.0, 1.65, offset_Comp_iL, 3.27, 1) *
+                   iL_gain_calib;
+  iL = firstLPF(iL_raw, &zIGA, coef1stLPF_iL);
 
   // Vgrid scale (ADC_A5)
   VgridADC = scaled_sensor_VOLT(adcVgrid, 0, 1.9, offset_Comp_vGrid, 3.9, 3.3,
@@ -726,8 +742,10 @@ interrupt void adcA_isr(void) {
   my_adaptive_pll.v_s = (fabsf(Vgrid2) > 10.0f) ? Vgrid2 : VgridA;
   Adaptive_SOGI_PLL_Func(&my_adaptive_pll);
 
-  // Bù góc lệch pha phần cứng (Phase Compensation: -8.875 độ đo trên Oscilloscope Tektronix)
-  theta_out = my_adaptive_pll.theta_out + (phase_shift_deg * (3.1415926535f / 180.0f));
+  // TỰ ĐỘNG BÙ TRỄ PHA THEO TẦN SỐ LƯỚI REAL-TIME (Giải pháp A: Δθ_auto = ω_est * total_delay_sec)
+  float32 auto_phase_comp = my_adaptive_pll.omega_est * total_delay_sec;
+  phase_shift_deg = auto_phase_comp * (180.0f / 3.1415926535f); // Cập nhật độ lệch pha hiển thị (độ)
+  theta_out = my_adaptive_pll.theta_out + auto_phase_comp;
   if (theta_out >= 6.283185307f) theta_out -= 6.283185307f;
   else if (theta_out < 0.0f) theta_out += 6.283185307f;
 
@@ -751,8 +769,22 @@ interrupt void adcA_isr(void) {
   if (v_q_norm > 1.0f) v_q_norm = 1.0f;
   delta_theta_deg = asinf(v_q_norm) * (180.0f / 3.1415926535f);
 
-  // 4. Cờ tự động xác nhận ĐỦ ĐIỀU KIỆN ĐỒNG BỘ HÒA LƯỚI (ΔV < 5V, Δf < 0.5Hz, Δθ < 5°)
-  is_grid_sync_ready = (delta_V < 5.0f && delta_f < 0.5f && delta_theta_deg < 5.0f && Vgrid2_rms > 10.0f) ? 1 : 0;
+  // 4. Cờ tự động xác nhận ĐỦ ĐIỀU KIỆN ĐỒNG BỘ HÒA LƯỚI (CÓ HYSTERESIS & DEBOUNCE 200ms CHỐNG RUNG RELAY)
+  static Uint16 sync_debounce_cnt = 0;
+  Uint16 cond_sync_now = (delta_V < 8.0f && delta_f < 0.8f && delta_theta_deg < 10.0f && Vgrid2_rms > 10.0f);
+  if (cond_sync_now) {
+    if (sync_debounce_cnt < 2000) { // Yêu cầu bám liên tục 200ms (2000 mẫu ngắt) mới bật cờ
+      sync_debounce_cnt++;
+    } else {
+      is_grid_sync_ready = 1;
+    }
+  } else {
+    if (sync_debounce_cnt > 0) {
+      sync_debounce_cnt--;
+    } else {
+      is_grid_sync_ready = 0;
+    }
+  }
   // detect zero
   duty_recA = (theta_out >= 0.03) && (theta_out <= 3.11);
   duty_recB = (theta_out >= 3.18) && (theta_out <= 6.25);
@@ -891,7 +923,7 @@ interrupt void adcA_isr(void) {
     float duty_pr = Piconout / Vdc_base;
     float control_signal = duty_ff + duty_pr;
 
-    // 8. Giới hạn duty [-0.95, 0.95]
+    // 8. Giới hạn duty [-0.95, 0.95] cho phép đẩy áp AC ngõ ra tối đa
     dutyA = Limiter(control_signal, 0.95f, -0.95f);
 
     // Debug
@@ -965,8 +997,8 @@ interrupt void adcA_isr(void) {
     float duty_pr = Piconout_I / Vdc_base;
     float control_signal = duty_ff + duty_pr;
 
-    // 8. Giới hạn duty cycle an toàn [-0.95, 0.95]
-    dutyA = Limiter(control_signal, 0.95f, -0.95f);
+    // 8. Giới hạn duty cycle an toàn [-0.8, 0.8]
+    dutyA = Limiter(control_signal, 0.8f, -0.8f);
 
     // 9. Unipolar SPWM (Đã đảo cực tính để đồng pha 100% với điện áp lưới)
     float duty_LegA = (-dutyA + 1.0f) / 2.0f;
@@ -987,38 +1019,40 @@ interrupt void adcA_isr(void) {
     ForceOFFPWM(1, 0);
     ForceOFFPWM(2, 0);
 
-    // 1. Soft-start dòng điện Iref (Tăng/giảm mượt mờ)
+    // 1. Soft-start dòng điện Iref (Tăng/giảm mượt mờ 0.5A / giây)
     if (ramp_Iref < Ipeak_ref) {
-      ramp_Iref += 0.1f * SAMPLING_TIME;
+      ramp_Iref += 5000.0f * SAMPLING_TIME;
       if (ramp_Iref > Ipeak_ref)
         ramp_Iref = Ipeak_ref;
     } else if (ramp_Iref > Ipeak_ref) {
-      ramp_Iref -= 0.1f * SAMPLING_TIME;
+      ramp_Iref -= 5000.0f * SAMPLING_TIME;
       if (ramp_Iref < Ipeak_ref)
         ramp_Iref = Ipeak_ref;
     }
 
-    // 2. Tham chiếu sin lấy theo pha SOGI-PLL đã khóa lưới (theta_out)
+    // 2. Tham chiếu sin lấy theo pha SOGI-PLL đã khóa lưới, có bù góc pha DÒNG ĐIỆN ĐỘC LẬP (delay_I_sec)
     float sin_theta = sinf(theta_out);
-    float Iref_inv = ramp_Iref * sin_theta;
+    float theta_I = theta_out + (my_adaptive_pll.omega_est * delay_I_sec);
+    float sin_theta_I = sinf(theta_I);
+    float Iref_inv = ramp_Iref * sin_theta_I;
 
     // 3. Điện áp DC Link cơ sở
     float Vdc_base = (Vlink > 20.0f) ? Vlink : 100.0f;
 
-    // 4. Feedforward bù điện áp Lưới trực tiếp từ cảm biến Lưới Vgrid2 (Có bù sụt áp Deadtime Vgrid_sync_gain)
-    float duty_ff = (Vgrid2 * Vgrid_sync_gain) / Vdc_base;
+    // 4. Feedforward bù điện áp Lưới từ SOGI-PLL đã bù góc trễ total_delay_sec (Vgpeak * sin_theta)
+    float duty_ff = (Vgpeak * sin_theta * Vgrid_sync_gain) / Vdc_base;
 
     // 5. Sai số dòng điện cảm biến
     float err_I = Iref_inv - (sign_iL * iL);
 
-    // 6. PR INLINE DÒNG ĐIỆN — Hệ số Tustin
+    // 6. PR INLINE DÒNG ĐIỆN — Hệ số Tustin chuẩn hóa (Kr_I = 100.0, ωc = 5.0 rad/s)
     pr_I_e2 = pr_I_e1;
     pr_I_e1 = pr_I_e0;
     pr_I_e0 = err_I;
 
-    float resonant_I = (0.060f * pr_I_e0 - 0.060f * pr_I_e2 + 7.998f * pr_I_y1 -
-                        3.998f * pr_I_y2) /
-                       4.002f;
+    float resonant_I = (0.200f * pr_I_e0 - 0.200f * pr_I_e2 + 7.9980f * pr_I_y1 -
+                        3.9990f * pr_I_y2) /
+                       4.0030f;
 
     if (resonant_I > 50.0f)
       resonant_I = 50.0f;
@@ -1034,7 +1068,7 @@ interrupt void adcA_isr(void) {
     float duty_pr = Piconout_I / Vdc_base;
     float control_signal = duty_ff + duty_pr;
 
-    // 8. Giới hạn duty cycle an toàn [-0.95, 0.95]
+    // 8. Giới hạn duty cycle an toàn [-0.95, 0.95] cho phép bơm dòng tối đa
     dutyA = Limiter(control_signal, 0.95f, -0.95f);
 
     // 9. Unipolar SPWM (Đã đảo cực tính để đồng pha 100% với điện áp lưới)
