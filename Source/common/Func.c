@@ -314,14 +314,16 @@ float32 scaled_sensor_dc(Uint16 ADC_Resultdc, float32 offsetdc){
    return outdc;
  }
 
-float scaled_sensor_CURR(unsigned int ADC_Result, float offset_IC, float offset_ref, float offset_comp,float R1, float R2)
-{
-    return (((ADC_Result * 3.3/4095.0) - offset_ref - offset_comp) * R1/R2 - offset_IC)/ 0.03075; // 30.75 ACS724
-}
+
 
 float scaled_sensor_VOLT(unsigned int ADC_Result, float offset_IC, float offset_ref, float offset_comp, float R1, float R2, float Rsen1, float Rsen2)
 {
     return ((((ADC_Result *  3.3/4095.0) - offset_ref - offset_comp) * R1 / R2 - offset_IC)/8.2) * (Rsen1 + Rsen2)/Rsen2; // Gain IC  8.2
+}
+
+float scaled_sensor_CURR(unsigned int ADC_Result, float offset_IC, float offset_ref, float offset_comp, float R1, float R2)
+{
+    return (((ADC_Result * 3.3f / 4095.0f) - offset_ref - offset_comp) * R1 / R2 - offset_IC) / 0.03075f;
 }
 
 float get_offset(float in, float signal)

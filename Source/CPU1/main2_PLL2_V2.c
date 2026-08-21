@@ -192,20 +192,21 @@ volatile float32 pr_I_y1 = 0,
                  pr_I_y2 = 0; // resonant output history (vòng dòng)
 float32 Kp = 0.1f; // Hệ số Kp cho Vòng Áp Inverter (Tăng lên 0.1f cho thử
                    // nghiệm bám setpoint chính xác)
-float32 Kr = 50;
-float32 Kp_I =
-    0.1f; // Hệ số Kp cho Vòng Kín Dòng Điện (Băng thông vòng kín ~1kHz)
-float32 Kr_I =
-    100.0f; // Hệ số Kr cho Vòng Kín Dòng Điện (Độ lợi gain >60dB tại 50Hz)
-float32 omegac_I = 5.0f;
+volatile float32 Kr = 50;
+volatile float32 Kp_I =
+    0.003f; // Hệ số Kp cho Vòng Kín Dòng Điện (Giảm 32.5 lần tương ứng chia 0.03075)
+volatile float32 Kr_I =
+    3.0f; // Hệ số Kr cho Vòng Kín Dòng Điện (Giảm 32.5 lần tương ứng chia 0.03075)
+volatile  float32 omegac_I = 5.0f;
 // Hệ số PR chuẩn hóa được tính động từ Kr_I và omegac_I (cập nhật bằng cờ
 // update_PR_I_coeff = 1 trên Watch Window)
 volatile float32 pr_I_hat_b0 = 0.04996f; // Hệ số b0 PR chuẩn hóa (tính lại tự
                                          // động mỗi ISR từ Kr_I, omegac_I)
 volatile float32 pr_I_hat_a1 = -1.9984f; // Hệ số a1 PR chuẩn hóa
 volatile float32 pr_I_hat_a2 = 0.9990f;  // Hệ số a2 PR chuẩn hóa
-float32 sign_iL = 1.0f;  // 1.0 = Thuận cực tính (Phản hồi ÂM chuẩn) | -1.0 = Đảo cực tính cảm biến dòng iL
-float32 sign_Vgrid =
+volatile  float32 sign_iL = 1.0f; // 1.0 = Thuận cực tính (Phản hồi ÂM chuẩn) | -1.0 = Đảo
+                        // cực tính cảm biến dòng iL
+volatile  float32 sign_Vgrid =
     1.0f; // 1.0 = Thuận cực tính | -1.0 = Đảo cực tính cảm biến áp VgridA
 volatile float32 iL_offset =
     110.0f; // Offset ADC count khi iL=0A (trừ ra trước khi quy đổi)
@@ -231,16 +232,18 @@ volatile float32 Vgrid2_gain_calib =
     0.776f; // Hệ số Calib chuẩn cho cảm biến áp AC Lưới 2 (Calib tuyến tính 6
             // điểm: 17V -> 90V)
 volatile float32 total_delay_sec =
-    0.000493f; // Tổng thời gian trễ phần cứng + phần mềm (493us tương ứng 8.875 độ ở 50Hz) cố định cho SOGI-PLL
+    0.0005; // Tổng thời gian trễ phần cứng + phần mềm (493us tương
+                    // ứng 8.875 độ ở 50Hz) cố định cho SOGI-PLL
 volatile float32 delay_I_sec =
-    -0.0001f; // Biến bù pha DÒNG ĐIỆN ĐỘC LẬP (Nhập âm trên Watch Window khi
+    -0.0035f; // Biến bù pha DÒNG ĐIỆN ĐỘC LẬP (Nhập âm trên Watch Window khi
               // dòng bị sớm pha, KHÔNG ảnh hưởng PLL)
 volatile float32 phase_shift_deg =
     8.875f; // Góc bù trễ pha tự động hiển thị trên Watch Window (độ)
 volatile float32 Vgrid_sync_gain =
-    1.00f; // Hệ số bù điện áp Feedforward hòa lưới (Chuẩn 1.00 để không vọt dòng khi I_control=0)
+    1.1f; // Hệ số bù điện áp Feedforward hòa lưới (Chuẩn 1.00 để không vọt
+           // dòng khi I_control=0)
 volatile float32 iL_gain_calib =
-    5.00f; // Hệ số Calib cảm biến dòng AC Inverter (Tăng từ 3.5 lên 5.0 để
+    1.00f; // Hệ số Calib cảm biến dòng AC Inverter (Tăng từ 3.5 lên 5.0 để
            // iL_rms đọc chuẩn trùng VOM)
 volatile float32 R_load =
     50.0f; // Điện trở tải thử nghiệm (Ohm) cho bù Feedforward độc lập
@@ -410,21 +413,18 @@ void main(void) {
   AdcaRegs.ADCSOC1CTL.bit.ACQPS = 14;
   AdcaRegs.ADCSOC1CTL.bit.TRIGSEL = 5;
 
-  // 3. iL (Dòng điện cảm) -> ADC C3 (SOC0 của ADC-C)
-  AdccRegs.ADCSOC0CTL.bit.CHSEL = 3;
-  AdccRegs.ADCSOC0CTL.bit.ACQPS = 14;
-  AdccRegs.ADCSOC0CTL.bit.TRIGSEL = 5;
+  // 3. iL (Dòng điện cảm) -> ADC A15 (SOC2 của ADC-A)
+  AdcaRegs.ADCSOC2CTL.bit.CHSEL = 15;  // Chọn kênh ADCINA15 (A15)
+  AdcaRegs.ADCSOC2CTL.bit.ACQPS = 14;  // Sample window
+  AdcaRegs.ADCSOC2CTL.bit.TRIGSEL = 5; // Trigger bằng ePWM1 SOCA
 
   // 4. Vgrid2 (Đo lưới 2) -> ADC C2 (SOC1 của ADC-C)
   AdccRegs.ADCSOC1CTL.bit.CHSEL = 2;
   AdccRegs.ADCSOC1CTL.bit.ACQPS = 14;
   AdccRegs.ADCSOC1CTL.bit.TRIGSEL = 5;
 
-  // 5. SỬA NGẮT: conf_ADC_A() đặt INT1SEL=2 (chờ SOC2 xong mới ngắt).
-  //    SOC2 không dùng nữa -> đặt lại INT1SEL=1 để ngắt ngay sau SOC1 (Vgrid1).
-  //    Tránh trễ ~1.5µs mỗi chu kỳ và giữ đồng bộ lấy mẫu với PWM đúng thời
-  //    điểm.
-  AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 1; // Kích ngắt sau EOC của SOC1
+  // 5. KÍCH NGẮT: Đặt INT1SEL=2 để ngắt ngay sau khi SOC2 (ADC_A15) chuyển đổi xong.
+  AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 2; // Kích ngắt sau EOC của SOC2 (ADC_A15)
   AdcaRegs.ADCINTSEL1N2.bit.INT1E = 1;   // Bật ADCINT1
   AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1; // Xóa flag cũ
   EDIS;
@@ -659,7 +659,7 @@ void main(void) {
       // Xuất iL đã lọc LPF mượt ra DAC (Thang PHÓNG ĐẠI ±2.5A cho dòng nhỏ)
       static float32 iL_dac_f23 = 0.0f;
       iL_dac_f23 = 0.85f * iL_dac_f23 + 0.15f * iL;
-      float32 val_dac = (4095.0f * (iL_dac_f23 / 2.5f + 1.0f) / 2.0f);
+      float32 val_dac = (4095.0f * (iL_dac_f23 / 2.043f + 1.0f) / 2.0f);
       if (val_dac > 4095.0f)
         val_dac = 4095.0f;
       if (val_dac < 0.0f)
@@ -703,13 +703,12 @@ interrupt void adcA_isr(void) {
   // time/ interrupt time ADC - INVERTER ĐÃ ĐƯỢC MAP LẠI CHÂN
   adcVlink = AdcaResultRegs.ADCRESULT0; // Đọc Vlink từ SOC0 của ADC-A (ADC_A1)
   adcVgrid = AdcaResultRegs.ADCRESULT1; // Đọc Vgrid1 từ SOC1 của ADC-A (ADC_A5)
-  adcIL = AdccResultRegs.ADCRESULT0;    // Đọc iL từ SOC0 của ADC-C (ADC_C3)
+  adcIL = AdcaResultRegs.ADCRESULT2;    // Đọc iL từ SOC2 của ADC-A (ADC_A15)
   adcVgrid2 =
       AdccResultRegs.ADCRESULT1; // Đọc Vgrid2 từ SOC1 của ADC-C (ADC_C2)
 
   float32 iL_raw =
-      scaled_sensor_CURR(adcIL, 0.0, 1.65, offset_Comp_iL, 3.27, 1) *
-      iL_gain_calib;
+      scaled_sensor_CURR(adcIL, 2.043, 0, offset_Comp_iL, 3.2,2.7) ;
   iL = firstLPF(iL_raw, &zIGA, coef1stLPF_iL);
 
   // Vgrid scale (ADC_A5)
