@@ -59,11 +59,10 @@ float32 offsetstart = 0.0, VgridA, Vlink, IL1, IL2, iL, iL2, iLpd, VlinkADC;
 Uint16 adcVi, adcVbatt, adcIlink;
 float32 VbattADC;
 float32 Ilink, Vbatt; // LLC Part
-float32 Vlinkref = 150, Vlinkref_max = 150, Vbatt_ref = 140, MaxVLink = 350.0f,
+float32 Vlinkref = 250.0f, Vlinkref_max = 250.0f, Vbatt_ref = 140, MaxVLink = 350.0f,
         Vlinkref_in, Vbatt_ref_offset = 0, ramp_Vlink, MaxVbatt = 500,
         Vbattt = 0;
-float32 MaxVac = 350.0f; // Ngưỡng bảo vệ quá áp AC ngõ ra (350V đỉnh để không
-                         // ngắt giả khi thử lưới)
+float32 MaxVac = 220.0f; // Ngưỡng bảo vệ quá áp AC ngõ ra (220V đỉnh ~ 155VRMS cho lưới 110VAC)
 float32 ma_open = 0.5;   // Hệ số điều chế Vòng Hở (Thay đổi từ 0.0 đến 0.95)
 float32 Vgm = 50, VgridADC, Vgpeak;
 Uint16 adcVgrid2 = 0;
@@ -160,7 +159,7 @@ struct Z_1ST Vlink_LLC1, Vlink_LLC2, io_LLC;
 struct COEF_2ND coeff_Vlink_LLC;
 
 float32 IFLref_LIMIT =
-    10.0f; // Ngưỡng bảo vệ quá dòng ngõ ra AC (15A đỉnh để không ngắt giả)
+    20.0f; // Ngưỡng bảo vệ quá dòng ngõ ra AC (15A đỉnh để không ngắt giả)
 float32 Ilinkref_LIMIT = 30;
 float32 Ilinkss_LIMIT = 20;
 uint32_t index = 0;
@@ -183,6 +182,7 @@ volatile float32 debug_Piconout =
     0.0f; // Output PR (dao động ±50V nếu hoạt động đúng)
 volatile float32 debug_err_inv =
     0.0f; // Sai số (dao động quanh 0 nếu bám setpoint)
+volatile float32 debug_val_dac_ref = 0.0f; // Giá trị tính toán DAC xuất Iref_inv (0 ~ 4095)
 // === Biến trạng thái cho PR INLINE (thay thế struct PR_Controller) ===
 volatile float32 pr_e0 = 0, pr_e1 = 0, pr_e2 = 0; // error history (vòng áp)
 volatile float32 pr_y1 = 0, pr_y2 = 0; // resonant output history (vòng áp)
@@ -196,8 +196,8 @@ volatile float32 Kr = 50;
 volatile float32 Kp_I =
     0.003f; // Hệ số Kp cho Vòng Kín Dòng Điện (Giảm 32.5 lần tương ứng chia 0.03075)
 volatile float32 Kr_I =
-    3.0f; // Hệ số Kr cho Vòng Kín Dòng Điện (Giảm 32.5 lần tương ứng chia 0.03075)
-volatile  float32 omegac_I = 5.0f;
+    3.5f; // Hệ số Kr cho Vòng Kín Dòng Điện (Giảm 32.5 lần tương ứng chia 0.03075)
+volatile  float32 omegac_I = 1.5f;
 // Hệ số PR chuẩn hóa được tính động từ Kr_I và omegac_I (cập nhật bằng cờ
 // update_PR_I_coeff = 1 trên Watch Window)
 volatile float32 pr_I_hat_b0 = 0.04996f; // Hệ số b0 PR chuẩn hóa (tính lại tự
@@ -227,7 +227,7 @@ volatile float32 Vlink_offset = 560.0f; // Zero offset ADC khi Vdc = 0V
 volatile float32 Vlink_gain =
     0.0890f; // Hệ số V/count (Đã Calib chuẩn đét tại 120.0VDC thực tế)
 volatile float32 Vgrid_gain_calib =
-    0.91f; // Hệ số Calib chuẩn cho cảm biến áp AC Inverter 1
+    1.1f; // Hệ số Calib chuẩn cho cảm biến áp AC Inverter 1
 volatile float32 Vgrid2_gain_calib =
     0.776f; // Hệ số Calib chuẩn cho cảm biến áp AC Lưới 2 (Calib tuyến tính 6
             // điểm: 17V -> 90V)
@@ -235,13 +235,13 @@ volatile float32 total_delay_sec =
     0.0005; // Tổng thời gian trễ phần cứng + phần mềm (493us tương
                     // ứng 8.875 độ ở 50Hz) cố định cho SOGI-PLL
 volatile float32 delay_I_sec =
-    -0.0035f; // Biến bù pha DÒNG ĐIỆN ĐỘC LẬP (Nhập âm trên Watch Window khi
-              // dòng bị sớm pha, KHÔNG ảnh hưởng PLL)
+    0.005f; // Biến bù pha DÒNG ĐIỆN ĐỘC LẬP — Reset về 0, tune dần ±0.0001f
+          // khi quan sát pha dòng/áp trên Oscilloscope (KHÔNG ảnh hưởng PLL)
 volatile float32 phase_shift_deg =
     8.875f; // Góc bù trễ pha tự động hiển thị trên Watch Window (độ)
 volatile float32 Vgrid_sync_gain =
-    1.1f; // Hệ số bù điện áp Feedforward hòa lưới (Chuẩn 1.00 để không vọt
-           // dòng khi I_control=0)
+    0.92f; // Hệ số bù Feedforward hòa lưới 110VAC / 200V DC-Link
+           // (0.92 → duty_ff_peak = 155.6*0.92/200 = 0.715 — còn nhiều headroom cho PR)
 volatile float32 iL_gain_calib =
     1.00f; // Hệ số Calib cảm biến dòng AC Inverter (Tăng từ 3.5 lên 5.0 để
            // iL_rms đọc chuẩn trùng VOM)
@@ -668,9 +668,13 @@ void main(void) {
       break;
     }
     case 24: {
-      // Xuất Iref_inv ra DAC (Scale ±5A -> 0 ~ 3.3V, điểm 0A = 1.65V)
-      DaccRegs.DACVALS.all =
-          (Uint16)(4095.0f * (Iref_inv / 5.0f + 1.0f) / 2.0f);
+      // Xuất Iref_inv ra DAC (Scale ±2.5A -> 0 ~ 3.3V, điểm 0A = 1.65V)
+      debug_val_dac_ref = (4095.0f * (Iref_inv / 2.5f + 1.0f) / 2.0f);
+      if (debug_val_dac_ref > 4095.0f)
+        debug_val_dac_ref = 4095.0f;
+      if (debug_val_dac_ref < 0.0f)
+        debug_val_dac_ref = 0.0f;
+      DaccRegs.DACVALS.all = (Uint16)debug_val_dac_ref;
       break;
     }
     }
@@ -1030,7 +1034,7 @@ interrupt void adcA_isr(void) {
 
     // 2. Tham chiếu sin 50Hz nội sinh (theta_gen)
     float sin_theta = sinf(2.0f * PI * theta_gen);
-    float Iref_inv = ramp_Iref * sin_theta;
+    Iref_inv = ramp_Iref * sin_theta; // Ghi vào global để DAC case 24 đọc được
 
     // 3. Điện áp DC Link làm điện áp cơ sở
     float Vdc_base = (Vlink > 20.0f) ? Vlink : 100.0f;
@@ -1104,7 +1108,7 @@ interrupt void adcA_isr(void) {
     float sin_theta = sinf(theta_out);
     float theta_I = theta_out + (my_adaptive_pll.omega_est * delay_I_sec);
     float sin_theta_I = sinf(theta_I);
-    float Iref_inv = ramp_Iref * sin_theta_I;
+    Iref_inv = ramp_Iref * sin_theta_I; // Ghi vào global để DAC case 24 đọc được
 
     // 3. Điện áp DC Link cơ sở
     float Vdc_base = (Vlink > 20.0f) ? Vlink : 100.0f;
